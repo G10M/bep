@@ -20,19 +20,21 @@ let cache = { value: null, ts: 0 };
 const CACHE_TTL = 60_000; 
 
 async function fetchBalanceFromRubep() {
-  console.log('Делаем прямой запрос к API RUBep...');
+  console.log('Делаем запрос к API RUBep с токеном...');
   
   const cookieString = process.env.RUBEP_COOKIES;
   const apiUrl = process.env.RUBEP_API_URL || 'https://app.rubep.com/api/v1/cards';
+  const token = process.env.RUBEP_TOKEN; // Берем токен из настроек
 
-  if (!cookieString) {
-    throw new Error('Не заданы куки RUBEP_COOKIES в настройках Render!');
+  if (!cookieString || !token) {
+    throw new Error('Не заданы RUBEP_COOKIES или RUBEP_TOKEN в настройках Render!');
   }
 
   const response = await fetch(apiUrl, {
     method: 'GET',
     headers: {
       'Cookie': cookieString,
+      'Authorization': `Bearer ${token}`, // <--- Добавили токен сюда
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       'Accept': 'application/json'
     }
@@ -47,8 +49,6 @@ async function fetchBalanceFromRubep() {
 
   const json = await response.json();
   
-  // Твой JSON приходит в формате { success: true, data: { cards: [...] } }
-  // Проверяем структуру, чтобы достать баланс
   if (json && json.success && json.data && Array.isArray(json.data.cards) && json.data.cards.length > 0) {
     const balance = json.data.cards[0].balance;
     console.log(`✅ Успех! Баланс: ${balance}`);

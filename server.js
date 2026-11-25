@@ -1,9 +1,13 @@
 require('dotenv').config();
 const express = require('express');
-const puppeteer = require('puppeteer-core');
 const chromium = require('@sparticuz/chromium');
 const rateLimit = require('express-rate-limit');
 const basicAuth = require('express-basic-auth');
+
+// Подключаем Стелс-режим
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+puppeteer.use(StealthPlugin());
 
 const app = express();
 app.set('trust proxy', 1);
@@ -14,7 +18,7 @@ app.use(basicAuth({
     realm: 'Rubep Balance'
 }));
 
-app.use(express.static('public'));
+app.use(express.static('public')); // Отсюда мы потом скачаем скриншот
 const limiter = rateLimit({ windowMs: 60_000, max: 5 });
 app.use('/api/', limiter);
 
@@ -22,14 +26,14 @@ let cache = { value: null, ts: 0 };
 const CACHE_TTL = 60_000; 
 
 async function fetchBalanceFromRubep() {
-  console.log('Запускаем легковесный браузер...');
+  console.log('Запускаем легковесный браузер со Стелсом...');
   
   const browser = await puppeteer.launch({
-    args: chromium.args,
+    args: [...chromium.args, '--disable-blink-features=AutomationControlled'],
     defaultViewport: chromium.defaultViewport,
     executablePath: await chromium.executablePath(),
     headless: chromium.headless,
-    ignoreHTTPSErrors: true, // <--- Принудительно отключаем проверку SSL
+    ignoreHTTPSErrors: true,
   });
 
   let page;
@@ -42,28 +46,31 @@ async function fetchBalanceFromRubep() {
     );
 
     console.log('Открываем страницу...');
-    // Ждем только базовую загрузку (чтобы не висеть 2 минуты)
+    // Ждем полной загрузки сети
     await page.goto('https://app.rubep.com/', {
-      waitUntil: 'domcontentloaded', 
-      timeout: 30_000
+      waitUntil: 'networkidle2', 
+      timeout: 60_000
     });
 
-    console.log('Вводим логин и пароль...');
+    console.log('Ждем 10 секунд (обход Cloudflare)...');
+    await new Promise(r => setTimeout(r, 10000)); 
+
+    console.log('Ищем поле ввода логина...');
     await page.waitForSelector('input[type="email"]', { timeout: 15_000 });
+    
     await page.type('input[type="email"]', process.env.RUBEP_LOGIN);
     await page.type('input[type="password"]', process.env.RUBEP_PASSWORD);
 
+    console.log('Ждем ответ от API...');
     const responsePromise = page.waitForResponse(async response => {
       if (response.url().includes('/api/') && response.request().method() === 'GET') {
         try {
           const json = await response.json();
-          if (json && json.success && json.data && json.data.cards) {
-            return true;
-          }
+          if (json && json.success && json.data && json.data.cards) return true;
         } catch (e) { return false; }
       }
       return false;
-    }, { timeout: 20_000 });
+    }, { timeout: 30_000 });
 
     console.log('Нажимаем кнопку "Войти"...');
     await page.click('button[type="submit"]');
@@ -79,24 +86,11 @@ async function fetchBalanceFromRubep() {
     console.error('!!! ПРОИЗОШЛА ОШИБКА !!!');
     console.error('Текст ошибки:', err.message);
     
-    // Если что-то пошло не так, выводим в логи то, что видит браузер
     if (page) {
-      console.log('--- АНАЛИЗ СТРАНИЦЫ ---');
-      try {
-        const title = await page.title();
-        console.log('Заголовок страницы:', title);
-        
-        const html = await page.content();
-        if (html.includes('cf-challenge') || title.includes('Just a moment')) {
-          console.log('ВЕРДИКТ: Это защита Cloudflare (капча).');
-        } else {
-          console.log('ВЕРДИКТ: Cloudflare не найден. Первые 500 символов страницы:');
-          console.log(html.substring(0, 500));
-        }
-      } catch (e) {
-        console.log('Не удалось проанализировать страницу.');
-      }
-      console.log('--- КОНЕЦ АНАЛИЗА ---');
+      console.log('Делаем скриншот для отладки...');
+      // Сохраняем скриншот в публичную папку
+      await page.screenshot({ path: './public/error.png' });
+      console.log('Скриншот сохранен!');
     }
     throw err;
   } finally {

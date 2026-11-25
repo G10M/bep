@@ -1,1 +1,61 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Баланс RUBep</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; display: grid; place-items: center;
+           min-height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }
+    .card { background: #1e293b; padding: 2.5rem 4rem; border-radius: 1rem;
+            box-shadow: 0 10px 30px rgba(0,0,0,.4); text-align: center; min-width: 300px; }
+    .label { font-size: .9rem; color: #94a3b8; letter-spacing: .1em;
+             text-transform: uppercase; }
+    .balance { font-size: 3rem; font-weight: 700; margin-top: .5rem;
+               color: #4ade80; transition: color 0.3s; }
+    .error { color: #f87171 !important; font-size: 1.5rem; }
+    button { margin-top: 1.5rem; padding: .6rem 1.2rem; border: none;
+             border-radius: .5rem; background: #3b82f6; color: white;
+             font-size: 1rem; cursor: pointer; transition: background 0.2s; }
+    button:hover { background: #2563eb; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="label">Баланс карты</div>
+    <div class="balance" id="balance">…</div>
+    <button id="refreshBtn" onclick="loadBalance()">Обновить</button>
+  </div>
 
+  <script>
+    async function loadBalance() {
+      const el = document.getElementById('balance');
+      const btn = document.getElementById('refreshBtn');
+      
+      el.textContent = '…';
+      el.classList.remove('error');
+      btn.disabled = true;
+
+      try {
+        const res = await fetch('/api/balance');
+        const data = await res.json();
+        
+        if (data.error) throw new Error(data.error);
+        
+        const num = parseFloat(data.balance);
+        el.textContent = num.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' });
+        
+      } catch (e) {
+        el.textContent = 'Ошибка сети';
+        el.classList.add('error');
+        console.error(e);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+    
+    loadBalance();
+  </script>
+</body>
+</html>

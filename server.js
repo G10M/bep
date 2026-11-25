@@ -1,9 +1,9 @@
 require('dotenv').config();
 const express = require('express');
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
+const chromium = require('@sparticuz/chromium');
 const rateLimit = require('express-rate-limit');
 const basicAuth = require('express-basic-auth');
-const fs = require('fs');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -22,21 +22,19 @@ let cache = { value: null, ts: 0 };
 const CACHE_TTL = 60_000; 
 
 async function fetchBalanceFromRubep() {
+  console.log('Запускаем легковесный браузер...');
+  
+  // Вот тут мы используем специальный браузер для Render
   const browser = await puppeteer.launch({
-    headless: 'new',
-    args: [
-      '--no-sandbox', 
-      '--disable-setuid-sandbox', 
-      '--disable-dev-shm-usage',
-      '--single-process',
-      '--no-zygote'
-    ]
+    args: chromium.args,
+    defaultViewport: chromium.defaultViewport,
+    executablePath: await chromium.executablePath(),
+    headless: chromium.headless,
   });
 
   try {
     const page = await browser.newPage();
     
-    // Логируем все консольные ошибки со страницы
     page.on('console', msg => console.log('БРАУЗЕР:', msg.text()));
     page.on('pageerror', err => console.log('ОШИБКА JS НА САЙТЕ:', err.message));
     
@@ -55,8 +53,7 @@ async function fetchBalanceFromRubep() {
     const pageTitle = await page.title();
     console.log('Заголовок страницы:', pageTitle);
     if (pageTitle.includes('Just a moment') || pageTitle.includes('Cloudflare')) {
-      console.log('ВНИМАНИЕ: Мы уперлись в Cloudflare!');
-      throw new Error('Cloudflare блокирует вход (капча)');
+      throw new Error('ВНИМАНИЕ: Cloudflare блокирует вход (капча)');
     }
 
     console.log('Вводим логин и пароль...');
@@ -86,20 +83,6 @@ async function fetchBalanceFromRubep() {
     console.log(`Успех! Баланс: ${balance}`);
     return balance;
 
-  } catch (err) {
-    console.error('!!! ПРОИЗОШЛА ОШИБКА !!!');
-    console.error('Текст ошибки:', err.message);
-    
-    // Если ошибка - делаем скриншот и сохраняем HTML
-    const page = (await browser.pages())[0];
-    if (page) {
-      await page.screenshot({ path: 'error-screenshot.png' });
-      const html = await page.content();
-      console.log('--- НАЧАЛО HTML КОДА СТРАНИЦЫ (ищем Cloudflare) ---');
-      console.log(html.substring(0, 1000)); // Выводим первые 1000 символов
-      console.log('--- КОНЕЦ HTML КОДА ---');
-    }
-    throw err;
   } finally {
     await browser.close();
   }
@@ -115,6 +98,7 @@ app.get('/api/balance', async (req, res) => {
     cache = { value: balance, ts: now };
     res.json({ balance, cached: false });
   } catch (err) {
+    console.error('Ошибка получения баланса:', err.message);
     res.status(502).json({ error: 'Не удалось получить баланс' });
   }
 });

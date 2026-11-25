@@ -22,16 +22,12 @@ const CACHE_TTL = 60_000;
 async function fetchBalanceFromRubep() {
   console.log('Делаем прямой запрос к API RUBep...');
   
-  // Сюда мы вставим куки, которые ты прислал
   const cookieString = process.env.RUBEP_COOKIES;
+  const apiUrl = process.env.RUBEP_API_URL || 'https://app.rubep.com/api/v1/cards';
 
   if (!cookieString) {
     throw new Error('Не заданы куки RUBEP_COOKIES в настройках Render!');
   }
-
-  // ВАЖНО: Проверь точный URL запроса во вкладке Network (он начинается с https://app.rubep.com/api/...)
-  // Я использую предполагаемый путь, если он не сработает, мы его поправим.
-  const apiUrl = 'https://app.rubep.com/api/cards'; 
 
   const response = await fetch(apiUrl, {
     method: 'GET',
@@ -44,19 +40,22 @@ async function fetchBalanceFromRubep() {
 
   if (!response.ok) {
     const text = await response.text();
-    console.log('Статус ответа:', response.status);
-    console.log('Тело ответа:', text.substring(0, 200));
+    console.log('❌ Статус ответа:', response.status);
+    console.log('❌ Тело ответа:', text.substring(0, 500));
     throw new Error(`Ошибка API: ${response.status}`);
   }
 
   const json = await response.json();
   
-  if (json && json.success && json.data && json.data.cards && json.data.cards.length > 0) {
+  // Твой JSON приходит в формате { success: true, data: { cards: [...] } }
+  // Проверяем структуру, чтобы достать баланс
+  if (json && json.success && json.data && Array.isArray(json.data.cards) && json.data.cards.length > 0) {
     const balance = json.data.cards[0].balance;
-    console.log(`Успех! Баланс: ${balance}`);
+    console.log(`✅ Успех! Баланс: ${balance}`);
     return balance;
   } else {
-    throw new Error('Не удалось найти баланс в JSON');
+    console.log('⚠️ Структура JSON отличается:', JSON.stringify(json).substring(0, 300));
+    throw new Error('Не удалось найти баланс в ответе');
   }
 }
 

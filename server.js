@@ -24,40 +24,32 @@ const CACHE_TTL = 60_000;
 async function fetchBalanceFromRubep() {
   console.log('Запускаем легковесный браузер...');
   
-  // Вот тут мы используем специальный браузер для Render
   const browser = await puppeteer.launch({
     args: chromium.args,
     defaultViewport: chromium.defaultViewport,
     executablePath: await chromium.executablePath(),
     headless: chromium.headless,
+    ignoreHTTPSErrors: true, // <--- Принудительно отключаем проверку SSL
   });
 
+  let page;
   try {
-    const page = await browser.newPage();
-    
-    page.on('console', msg => console.log('БРАУЗЕР:', msg.text()));
-    page.on('pageerror', err => console.log('ОШИБКА JS НА САЙТЕ:', err.message));
+    page = await browser.newPage();
     
     await page.setUserAgent(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     );
 
-    console.log('Открываем страницу логина...');
+    console.log('Открываем страницу...');
+    // Ждем только базовую загрузку (чтобы не висеть 2 минуты)
     await page.goto('https://app.rubep.com/', {
-      waitUntil: 'networkidle2',
-      timeout: 60_000
+      waitUntil: 'domcontentloaded', 
+      timeout: 30_000
     });
 
-    // ПРОВЕРКА НА CLOUDFLARE
-    const pageTitle = await page.title();
-    console.log('Заголовок страницы:', pageTitle);
-    if (pageTitle.includes('Just a moment') || pageTitle.includes('Cloudflare')) {
-      throw new Error('ВНИМАНИЕ: Cloudflare блокирует вход (капча)');
-    }
-
     console.log('Вводим логин и пароль...');
-    await page.waitForSelector('input[type="email"]', { timeout: 30_000 });
+    await page.waitForSelector('input[type="email"]', { timeout: 15_000 });
     await page.type('input[type="email"]', process.env.RUBEP_LOGIN);
     await page.type('input[type="password"]', process.env.RUBEP_PASSWORD);
 
@@ -71,7 +63,7 @@ async function fetchBalanceFromRubep() {
         } catch (e) { return false; }
       }
       return false;
-    }, { timeout: 30_000 });
+    }, { timeout: 20_000 });
 
     console.log('Нажимаем кнопку "Войти"...');
     await page.click('button[type="submit"]');
@@ -83,6 +75,30 @@ async function fetchBalanceFromRubep() {
     console.log(`Успех! Баланс: ${balance}`);
     return balance;
 
+  } catch (err) {
+    console.error('!!! ПРОИЗОШЛА ОШИБКА !!!');
+    console.error('Текст ошибки:', err.message);
+    
+    // Если что-то пошло не так, выводим в логи то, что видит браузер
+    if (page) {
+      console.log('--- АНАЛИЗ СТРАНИЦЫ ---');
+      try {
+        const title = await page.title();
+        console.log('Заголовок страницы:', title);
+        
+        const html = await page.content();
+        if (html.includes('cf-challenge') || title.includes('Just a moment')) {
+          console.log('ВЕРДИКТ: Это защита Cloudflare (капча).');
+        } else {
+          console.log('ВЕРДИКТ: Cloudflare не найден. Первые 500 символов страницы:');
+          console.log(html.substring(0, 500));
+        }
+      } catch (e) {
+        console.log('Не удалось проанализировать страницу.');
+      }
+      console.log('--- КОНЕЦ АНАЛИЗА ---');
+    }
+    throw err;
   } finally {
     await browser.close();
   }
@@ -98,7 +114,6 @@ app.get('/api/balance', async (req, res) => {
     cache = { value: balance, ts: now };
     res.json({ balance, cached: false });
   } catch (err) {
-    console.error('Ошибка получения баланса:', err.message);
     res.status(502).json({ error: 'Не удалось получить баланс' });
   }
 });

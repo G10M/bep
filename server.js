@@ -28,7 +28,12 @@ async function fetchBalanceFromRubep() {
   // Запускаем невидимый браузер. На хостинге нужны флаги безопасности.
   const browser = await puppeteer.launch({
     headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    args: [
+      '--no-sandbox', 
+      '--disable-setuid-sandbox', 
+      '--disable-dev-shm-usage',
+      '--single-process'
+    ]
   });
 
   try {

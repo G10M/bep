@@ -1,13 +1,7 @@
 require('dotenv').config();
 const express = require('express');
-const chromium = require('@sparticuz/chromium');
 const rateLimit = require('express-rate-limit');
 const basicAuth = require('express-basic-auth');
-
-// Подключаем Стелс-режим
-const puppeteer = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-puppeteer.use(StealthPlugin());
 
 const app = express();
 app.set('trust proxy', 1);
@@ -18,7 +12,7 @@ app.use(basicAuth({
     realm: 'Rubep Balance'
 }));
 
-app.use(express.static('public')); // Отсюда мы потом скачаем скриншот
+app.use(express.static('public'));
 const limiter = rateLimit({ windowMs: 60_000, max: 5 });
 app.use('/api/', limiter);
 
@@ -26,75 +20,43 @@ let cache = { value: null, ts: 0 };
 const CACHE_TTL = 60_000; 
 
 async function fetchBalanceFromRubep() {
-  console.log('Запускаем легковесный браузер со Стелсом...');
+  console.log('Делаем прямой запрос к API RUBep...');
   
-  const browser = await puppeteer.launch({
-    args: [...chromium.args, '--disable-blink-features=AutomationControlled'],
-    defaultViewport: chromium.defaultViewport,
-    executablePath: await chromium.executablePath(),
-    headless: chromium.headless,
-    ignoreHTTPSErrors: true,
+  // Сюда мы вставим куки, которые ты прислал
+  const cookieString = process.env.RUBEP_COOKIES;
+
+  if (!cookieString) {
+    throw new Error('Не заданы куки RUBEP_COOKIES в настройках Render!');
+  }
+
+  // ВАЖНО: Проверь точный URL запроса во вкладке Network (он начинается с https://app.rubep.com/api/...)
+  // Я использую предполагаемый путь, если он не сработает, мы его поправим.
+  const apiUrl = 'https://app.rubep.com/api/cards'; 
+
+  const response = await fetch(apiUrl, {
+    method: 'GET',
+    headers: {
+      'Cookie': cookieString,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'application/json'
+    }
   });
 
-  let page;
-  try {
-    page = await browser.newPage();
-    
-    await page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-      '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    );
+  if (!response.ok) {
+    const text = await response.text();
+    console.log('Статус ответа:', response.status);
+    console.log('Тело ответа:', text.substring(0, 200));
+    throw new Error(`Ошибка API: ${response.status}`);
+  }
 
-    console.log('Открываем страницу...');
-    // Ждем полной загрузки сети
-    await page.goto('https://app.rubep.com/', {
-      waitUntil: 'networkidle2', 
-      timeout: 60_000
-    });
-
-    console.log('Ждем 10 секунд (обход Cloudflare)...');
-    await new Promise(r => setTimeout(r, 10000)); 
-
-    console.log('Ищем поле ввода логина...');
-    await page.waitForSelector('input[type="email"]', { timeout: 15_000 });
-    
-    await page.type('input[type="email"]', process.env.RUBEP_LOGIN);
-    await page.type('input[type="password"]', process.env.RUBEP_PASSWORD);
-
-    console.log('Ждем ответ от API...');
-    const responsePromise = page.waitForResponse(async response => {
-      if (response.url().includes('/api/') && response.request().method() === 'GET') {
-        try {
-          const json = await response.json();
-          if (json && json.success && json.data && json.data.cards) return true;
-        } catch (e) { return false; }
-      }
-      return false;
-    }, { timeout: 30_000 });
-
-    console.log('Нажимаем кнопку "Войти"...');
-    await page.click('button[type="submit"]');
-
-    const response = await responsePromise;
-    const json = await response.json();
+  const json = await response.json();
+  
+  if (json && json.success && json.data && json.data.cards && json.data.cards.length > 0) {
     const balance = json.data.cards[0].balance;
-    
     console.log(`Успех! Баланс: ${balance}`);
     return balance;
-
-  } catch (err) {
-    console.error('!!! ПРОИЗОШЛА ОШИБКА !!!');
-    console.error('Текст ошибки:', err.message);
-    
-    if (page) {
-      console.log('Делаем скриншот для отладки...');
-      // Сохраняем скриншот в публичную папку
-      await page.screenshot({ path: './public/error.png' });
-      console.log('Скриншот сохранен!');
-    }
-    throw err;
-  } finally {
-    await browser.close();
+  } else {
+    throw new Error('Не удалось найти баланс в JSON');
   }
 }
 
@@ -108,6 +70,7 @@ app.get('/api/balance', async (req, res) => {
     cache = { value: balance, ts: now };
     res.json({ balance, cached: false });
   } catch (err) {
+    console.error('Ошибка получения баланса:', err.message);
     res.status(502).json({ error: 'Не удалось получить баланс' });
   }
 });

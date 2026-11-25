@@ -29,13 +29,16 @@ const CACHE_TTL = 60_000;
 
 async function fetchBalanceFromRubep() {
   // Запускаем браузер (без указания путей, он найдет его сам благодаря postinstall)
-  const browser = await puppeteer.launch({
+    const browser = await puppeteer.launch({
     headless: 'new',
     args: [
       '--no-sandbox', 
       '--disable-setuid-sandbox', 
       '--disable-dev-shm-usage',
-      '--single-process'
+      '--single-process',
+      '--no-zygote',
+      '--disable-gpu', // <-- Отключаем графику
+      '--disable-software-rasterizer'
     ]
   });
 

@@ -6,10 +6,10 @@ const basicAuth = require('express-basic-auth');
 
 const app = express();
 
-// 1. Исправление для Render: доверяем прокси-серверу, чтобы rate-limit работал корректно
+// 1. Исправление для Render (rate-limit)
 app.set('trust proxy', 1);
 
-// 2. Защита паролем (если APP_PASS на Render не задан, используется 12345@R)
+// 2. Защита паролем
 app.use(basicAuth({
     users: { [process.env.APP_USER || 'friend']: process.env.APP_PASS || '12345@R' },
     challenge: true,
@@ -19,18 +19,17 @@ app.use(basicAuth({
 // Раздаем файлы из папки public
 app.use(express.static('public'));
 
-// 3. Защита от спама (макс 5 запросов в минуту)
+// 3. Защита от спама
 const limiter = rateLimit({ windowMs: 60_000, max: 5 });
 app.use('/api/', limiter);
 
-// 4. Кэш, чтобы не запускать браузер каждую секунду
+// 4. Кэш
 let cache = { value: null, ts: 0 };
-const CACHE_TTL = 60_000; // Данные живут 1 минуту
+const CACHE_TTL = 60_000; 
 
 async function fetchBalanceFromRubep() {
-  // Запускаем невидимый браузер
+  // Запускаем браузер (без указания путей, он найдет его сам благодаря postinstall)
   const browser = await puppeteer.launch({
-    cacheDirectory: './.puppeteer-cache', // <-- Указываем папку для Chrome
     headless: 'new',
     args: [
       '--no-sandbox', 
@@ -60,7 +59,6 @@ async function fetchBalanceFromRubep() {
 
     console.log('Ждем ответ от API при входе...');
     
-    // Перехватываем JSON с балансом
     const responsePromise = page.waitForResponse(async response => {
       if (response.url().includes('/api/') && response.request().method() === 'GET') {
         try {
@@ -96,7 +94,7 @@ async function fetchBalanceFromRubep() {
   }
 }
 
-// 5. Наш API для фронтенда
+// 5. API для фронтенда
 app.get('/api/balance', async (req, res) => {
   try {
     const now = Date.now();
@@ -114,7 +112,7 @@ app.get('/api/balance', async (req, res) => {
   }
 });
 
-// 6. Запуск сервера
+// 6. Запуск
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Сервер запущен на порту ${PORT}`);

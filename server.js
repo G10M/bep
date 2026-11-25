@@ -6,9 +6,9 @@ const basicAuth = require('express-basic-auth');
 
 const app = express();
 
-// 1. Защита паролем (чтобы друг зашел по логину/паролю)
+// 1. Защита паролем (если APP_PASS на Render не задан, используется 12345@R)
 app.use(basicAuth({
-    users: { [process.env.APP_USER || 'friend']: process.env.APP_PASS || '12345' },
+    users: { [process.env.APP_USER || 'friend']: process.env.APP_PASS || '12345@R' },
     challenge: true,
     realm: 'Rubep Balance'
 }));
@@ -25,7 +25,6 @@ let cache = { value: null, ts: 0 };
 const CACHE_TTL = 60_000; // Данные живут 1 минуту
 
 async function fetchBalanceFromRubep() {
-  // Запускаем невидимый браузер
   const browser = await puppeteer.launch({
     headless: 'new',
     args: [
@@ -56,7 +55,6 @@ async function fetchBalanceFromRubep() {
 
     console.log('Ждем ответ от API при входе...');
     
-    // Перехватываем JSON с балансом (начинаем ждать ДО клика)
     const responsePromise = page.waitForResponse(async response => {
       if (response.url().includes('/api/') && response.request().method() === 'GET') {
         try {
@@ -72,10 +70,8 @@ async function fetchBalanceFromRubep() {
     }, { timeout: 30_000 });
 
     console.log('Нажимаем кнопку "Войти"...');
-    // Нажимаем кнопку входа
     await page.click('button[type="submit"]');
 
-    // Ждем, пока перехватится нужный запрос
     const response = await responsePromise;
     const json = await response.json();
 
@@ -90,7 +86,6 @@ async function fetchBalanceFromRubep() {
     return balance;
 
   } finally {
-    // Обязательно закрываем браузер, чтобы не забивать память сервера
     await browser.close();
   }
 }
@@ -99,18 +94,14 @@ async function fetchBalanceFromRubep() {
 app.get('/api/balance', async (req, res) => {
   try {
     const now = Date.now();
-    // Если данные в кэше свежие (моложе 1 минуты), отдаем их
     if (cache.value && now - cache.ts < CACHE_TTL) {
       return res.json({ balance: cache.value, cached: true });
     }
 
-    // Иначе запускаем Puppeteer
     const balance = await fetchBalanceFromRubep();
-    
-    // Обновляем кэш
     cache = { value: balance, ts: now };
-    res.json({ balance, cached: false });
     
+    res.json({ balance, cached: false });
   } catch (err) {
     console.error('Ошибка получения баланса:', err.message);
     res.status(502).json({ error: 'Не удалось получить баланс' });

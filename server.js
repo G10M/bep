@@ -6,30 +6,25 @@ const basicAuth = require('express-basic-auth');
 const app = express();
 app.set('trust proxy', 1);
 
-// Защита паролем для входа на твой сайт
 app.use(basicAuth({
     users: { [process.env.APP_USER || 'friend']: process.env.APP_PASS || '12345@R' },
     challenge: true,
     realm: 'Rubep Balance'
 }));
 
-// Раздача твоего одностраничного сайта
 app.use(express.static('public'));
 
-// Защита от спама (максимум 5 запросов в минуту)
 const limiter = rateLimit({ windowMs: 60_000, max: 5 });
 app.use('/api/', limiter);
 
-// Кэш, чтобы не дергать RUBep при каждом обновлении страницы
 let cache = { value: null, ts: 0 };
-const CACHE_TTL = 60_000; // 1 минута
+const CACHE_TTL = 60_000; 
 
-// Переменная для хранения актуального токена в оперативной памяти
-let currentToken = process.env.RUBEP_TOKEN; 
+// Теперь мы не полагаемся на RUBEP_TOKEN из настроек, а начинаем с null
+let currentToken = null; 
 
-// Функция автообновления токена
 async function refreshAccessToken() {
-  console.log('🔄 Токен протух, запрашиваем новый через /auth/refresh...');
+  console.log('🔄 Запрашиваем свежий токен через /auth/refresh...');
   
   const response = await fetch('https://app.rubep.com/api/v1/auth/refresh', {
     method: 'POST',
@@ -38,9 +33,11 @@ async function refreshAccessToken() {
       'Content-Type': 'application/json',
       'Origin': 'https://app.rubep.com',
       'Referer': 'https://app.rubep.com/cards',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      // Имитируем твой реальный браузер
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'application/json'
     },
-    body: JSON.stringify({}) // Отправляем пустой объект, как это делает браузер
+    body: JSON.stringify({}) 
   });
 
   if (!response.ok) {
@@ -57,11 +54,14 @@ async function refreshAccessToken() {
   throw new Error('Не удалось найти accessToken в ответе refresh');
 }
 
-// Главная функция получения баланса
 async function fetchBalanceFromRubep() {
   const apiUrl = 'https://app.rubep.com/api/v1/cards';
   
-  // Вспомогательная функция для запроса баланса
+  // Если токена нет, сразу идем обновлять
+  if (!currentToken) {
+    currentToken = await refreshAccessToken();
+  }
+
   const makeRequest = async (token) => {
     return await fetch(apiUrl, {
       method: 'GET',
@@ -77,10 +77,9 @@ async function fetchBalanceFromRubep() {
   console.log('Делаем запрос к API карт...');
   let response = await makeRequest(currentToken);
 
-  // Если токен протух (ошибка 401), обновляем его и пробуем еще раз
   if (response.status === 401) {
     currentToken = await refreshAccessToken();
-    response = await makeRequest(currentToken); // Повторный запрос с новым токеном
+    response = await makeRequest(currentToken);
   }
 
   if (!response.ok) {
@@ -91,7 +90,6 @@ async function fetchBalanceFromRubep() {
 
   const json = await response.json();
   
-  // Достаем баланс из структуры JSON, которую ты присылал
   if (json && json.success && json.data && Array.isArray(json.data.cards) && json.data.cards.length > 0) {
     const balance = json.data.cards[0].balance;
     console.log(`✅ Успех! Баланс: ${balance}`);
@@ -101,20 +99,15 @@ async function fetchBalanceFromRubep() {
   }
 }
 
-// Эндпоинт для твоего сайта
 app.get('/api/balance', async (req, res) => {
   try {
     const now = Date.now();
-    // Если данные в кэше свежие, отдаем их
     if (cache.value && now - cache.ts < CACHE_TTL) {
       return res.json({ balance: cache.value, cached: true });
     }
-    
-    // Иначе идем в RUBep
     const balance = await fetchBalanceFromRubep();
     cache = { value: balance, ts: now };
     res.json({ balance, cached: false });
-    
   } catch (err) {
     console.error('Ошибка получения баланса:', err.message);
     res.status(502).json({ error: 'Не удалось получить баланс' });

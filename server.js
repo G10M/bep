@@ -19,31 +19,62 @@ app.use('/api/', limiter);
 let cache = { value: null, ts: 0 };
 const CACHE_TTL = 60_000; 
 
-async function fetchBalanceFromRubep() {
-  console.log('Делаем запрос к API RUBep с токеном...');
+// Переменная для хранения актуального токена в памяти
+let currentToken = process.env.RUBEP_TOKEN; 
+
+// Функция для обновления токена
+async function refreshAccessToken() {
+  console.log('🔄 Токен протух, запрашиваем новый через /auth/refresh...');
   
-  const cookieString = process.env.RUBEP_COOKIES;
-  const apiUrl = process.env.RUBEP_API_URL || 'https://app.rubep.com/api/v1/cards';
-  const token = process.env.RUBEP_TOKEN; // Берем токен из настроек
-
-  if (!cookieString || !token) {
-    throw new Error('Не заданы RUBEP_COOKIES или RUBEP_TOKEN в настройках Render!');
-  }
-
-  const response = await fetch(apiUrl, {
-    method: 'GET',
+  const response = await fetch('https://app.rubep.com/api/v1/auth/refresh', {
+    method: 'POST',
     headers: {
-      'Cookie': cookieString,
-      'Authorization': `Bearer ${token}`, // <--- Добавили токен сюда
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'application/json'
+      'Cookie': process.env.RUBEP_COOKIES,
+      'Content-Type': 'application/json',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
   });
 
   if (!response.ok) {
+    throw new Error(`Не удалось обновить токен. Статус: ${response.status}`);
+  }
+
+  const json = await response.json();
+  if (json.success && json.data && json.data.accessToken) {
+    console.log('✅ Новый токен успешно получен!');
+    return json.data.accessToken;
+  }
+  throw new Error('Не удалось найти accessToken в ответе refresh');
+}
+
+async function fetchBalanceFromRubep() {
+  const apiUrl = 'https://app.rubep.com/api/v1/cards';
+  
+  // Вспомогательная функция для самого запроса
+  const makeRequest = async (token) => {
+    return await fetch(apiUrl, {
+      method: 'GET',
+      headers: {
+        'Cookie': process.env.RUBEP_COOKIES,
+        'Authorization': `Bearer ${token}`,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json'
+      }
+    });
+  };
+
+  console.log('Делаем запрос к API карт...');
+  let response = await makeRequest(currentToken);
+
+  // Если токен протух (401), обновляем его и пробуем снова
+  if (response.status === 401) {
+    currentToken = await refreshAccessToken();
+    response = await makeRequest(currentToken); // Повторный запрос с новым токеном
+  }
+
+  if (!response.ok) {
     const text = await response.text();
-    console.log('❌ Статус ответа:', response.status);
-    console.log('❌ Тело ответа:', text.substring(0, 500));
+    console.log('❌ Ошибка API:', response.status, text);
     throw new Error(`Ошибка API: ${response.status}`);
   }
 
@@ -54,7 +85,6 @@ async function fetchBalanceFromRubep() {
     console.log(`✅ Успех! Баланс: ${balance}`);
     return balance;
   } else {
-    console.log('⚠️ Структура JSON отличается:', JSON.stringify(json).substring(0, 300));
     throw new Error('Не удалось найти баланс в ответе');
   }
 }

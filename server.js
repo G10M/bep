@@ -6,6 +6,7 @@ const basicAuth = require('express-basic-auth');
 const app = express();
 app.set('trust proxy', 1);
 
+// Защита для твоего друга (пароль 12345@R)
 app.use(basicAuth({
     users: { [process.env.APP_USER || 'friend']: process.env.APP_PASS || '12345@R' },
     challenge: true,
@@ -20,53 +21,54 @@ app.use('/api/', limiter);
 let cache = { value: null, ts: 0 };
 const CACHE_TTL = 60_000; 
 
-// Теперь мы не полагаемся на RUBEP_TOKEN из настроек, а начинаем с null
+// Токен храним в памяти сервера
 let currentToken = null; 
 
-async function refreshAccessToken() {
-  console.log('🔄 Запрашиваем свежий токен через /auth/refresh...');
+async function loginToRubep() {
+  console.log('🔐 Логинимся в RUBep по паролю...');
   
-  const response = await fetch('https://app.rubep.com/api/v1/auth/refresh', {
+  // ВАЖНО: Если сайт выдаст ошибку 404, значит адрес для входа другой.
+  // Мы это увидим в логах.
+  const response = await fetch('https://app.rubep.com/api/v1/auth/login', {
     method: 'POST',
     headers: {
-      'Cookie': process.env.RUBEP_COOKIES,
       'Content-Type': 'application/json',
       'Origin': 'https://app.rubep.com',
-      'Referer': 'https://app.rubep.com/cards',
-      // Имитируем твой реальный браузер
+      'Referer': 'https://app.rubep.com/',
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       'Accept': 'application/json'
     },
-    body: JSON.stringify({}) 
+    body: JSON.stringify({
+      email: process.env.RUBEP_LOGIN,
+      password: process.env.RUBEP_PASSWORD
+    })
   });
 
   if (!response.ok) {
     const text = await response.text();
-    console.log('❌ Ошибка Refresh:', response.status, text.substring(0, 200));
-    throw new Error(`Не удалось обновить токен. Статус: ${response.status}`);
+    console.log('❌ Ошибка входа:', response.status, text.substring(0, 300));
+    throw new Error(`Не удалось залогиниться. Статус: ${response.status}`);
   }
 
   const json = await response.json();
   if (json.success && json.data && json.data.accessToken) {
-    console.log('✅ Новый токен успешно получен!');
+    console.log('✅ Успешный вход! Токен получен.');
     return json.data.accessToken;
   }
-  throw new Error('Не удалось найти accessToken в ответе refresh');
+  throw new Error('Не удалось найти accessToken в ответе входа');
 }
 
 async function fetchBalanceFromRubep() {
   const apiUrl = 'https://app.rubep.com/api/v1/cards';
   
-  // Если токена нет, сразу идем обновлять
   if (!currentToken) {
-    currentToken = await refreshAccessToken();
+    currentToken = await loginToRubep();
   }
 
   const makeRequest = async (token) => {
     return await fetch(apiUrl, {
       method: 'GET',
       headers: {
-        'Cookie': process.env.RUBEP_COOKIES,
         'Authorization': `Bearer ${token}`,
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'application/json'
@@ -77,14 +79,16 @@ async function fetchBalanceFromRubep() {
   console.log('Делаем запрос к API карт...');
   let response = await makeRequest(currentToken);
 
+  // Если токен протух, логинимся заново
   if (response.status === 401) {
-    currentToken = await refreshAccessToken();
+    console.log('🔄 Токен протух, логинимся заново...');
+    currentToken = await loginToRubep();
     response = await makeRequest(currentToken);
   }
 
   if (!response.ok) {
     const text = await response.text();
-    console.log('❌ Ошибка API:', response.status, text.substring(0, 200));
+    console.log('❌ Ошибка API:', response.status, text.substring(0, 300));
     throw new Error(`Ошибка API: ${response.status}`);
   }
 
